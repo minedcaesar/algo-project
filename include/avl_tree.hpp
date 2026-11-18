@@ -9,8 +9,9 @@
 
 // Node layout required by the course interface, plus one field added by us:
 // `balance`, the AVL balance indicator, defined as height(right) - height(left)
-// and always in {-1, 0, +1} between operations. The 1962 paper stores exactly
-// this three-valued indicator per vertex instead of a height.
+// and always in {-1, 0, +1} between operations. The 1962 paper stores the same
+// information as two bits per cell ("1 0" left higher, "0 1" right higher,
+// "0 0" equal) instead of a height.
 struct Node {
     int key;
     int value;
@@ -35,7 +36,8 @@ public:
 
     // --- Required interface -------------------------------------------------
     // Inserts (key, val). If key is already present its value is overwritten
-    // and the shape of the tree does not change.
+    // and the shape of the tree does not change. (The paper leaves the tree
+    // untouched on a duplicate; see REPORT.md section 2.4.)
     void insert(int key, int val, TreeMetrics& m);
     // Returns true and writes the value to `out` if key is present.
     bool find(int key, int& out, TreeMetrics& m) const;

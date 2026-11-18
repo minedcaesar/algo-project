@@ -1,9 +1,10 @@
 # AVL Trees (1962) — from a four-page Soviet note to modern kernels
 
-> **Status of this draft.** Items marked **⚠ verify** are drawn from secondary
-> knowledge and must be checked against the primary source (the Russian
-> original or the English translation) before submission. Everything about the
-> code and measurements is reproducible from this repository.
+> **Sources.** Statements about the 1962 paper were checked against the
+> English translation (scan supplied by the British Library, 5 pp.); quotes
+> below are from it. Biographical and "legacy" facts were checked against the
+> secondary sources listed in the References. Everything about the code and
+> measurements is reproducible from this repository.
 
 ---
 
@@ -16,67 +17,111 @@
   *Доклады Академии наук СССР*, т. 146, № 2, 1962, с. 263–266.
 - **English translation:** G. M. Adel'son-Vel'skii and E. M. Landis,
   "An algorithm for the organization of information",
-  *Soviet Mathematics — Doklady*, vol. 3, 1962, pp. 1259–1263
-  (translated by Myron J. Ricci). **⚠ verify page range and translator.**
+  *Soviet Mathematics — Doklady*, vol. 3, 1962, pp. 1259–1263,
+  translated by Myron J. Ricci. The translation carries the date
+  "Received 13/APR/62".
 
-*Doklady* published short communications (a few pages) presented by an
-Academician; this explains the paper's density: definitions, the insertion
-procedure, and the height bound, with almost no discussion.
+*Doklady* published very short communications; the paper is four pages and
+contains: the problem statement, the data layout, a height bound (Lemma 1),
+the search procedure, the insertion procedure with a correctness lemma
+(Lemma 2) and a three-case restructuring, and a one-paragraph cost argument.
+Its bibliography has a **single entry**: P. F. Windley, *Comput. J.* 3
+(1960/61), 84 — Windley's "Trees, forests and rearranging", from which the
+paper borrows the term "reference board" for the tree index.
 
 ### 1.2 Authors and setting
 
-- **Georgy M. Adelson-Velsky** (1922–2014) worked in Moscow on early computing
-  and is best known outside this paper for computer chess: he co-authored the
-  ITEP program that played the 1966–67 correspondence match against the
-  Stanford (Kotok–McCarthy) program, and later the program *Kaissa*, winner of
-  the first World Computer Chess Championship (1974). **⚠ verify dates.**
-- **Evgenii M. Landis** (1921–1997), a mathematician at Moscow State
-  University, known mainly for work in partial differential equations.
+- **Georgy M. Adelson-Velsky** (8 Jan 1922 – 26 Apr 2014). From 1961 he worked
+  in Alexander Kronrod's laboratory at the Institute of Theoretical and
+  Experimental Physics (ITEP), Moscow, where he co-developed the ITEP chess
+  program; it beat the Kotok–McCarthy (Stanford/MIT) program 3–1 in a
+  four-game correspondence match in 1966–67, running on an M-20-family
+  machine. Its authors were later involved in *Kaissa*, winner of the 1st World
+  Computer Chess Championship (Stockholm, 1974).
+- **Evgenii M. Landis** (6 Oct 1921 – 12 Dec 1997), mathematician at Moscow
+  State University, also a student of Kronrod; known mainly for uniqueness
+  theorems and Harnack inequalities for elliptic and parabolic PDEs.
 
-The motivating problem, as stated in the title, is the *organization of
-information*: maintaining a set of records in the memory of a computer so that
-both **lookup** and **insertion of a new record** are cheap. The two known
-options of the time each fail one of these:
+Kronrod is thus the common link between the two authors. Note that **the
+paper itself says nothing about chess**; the connection is biographical.
+
+**Problem as stated in the paper.** "The information enters a machine in
+sequence from a certain reserve." Each element has an "estimate" (key) and
+must be stored "in such a way that at any moment a very large number of
+operations is not required to scan the information with the given evaluation
+and to record the new information element." The goal is both search and
+recording "in C lg N operations". The model is explicitly "a three-address
+machine"; no specific computer is named.
+
+The design follows from this model:
+
+- Records are stored **in order of arrival** in one memory area; a separate
+  area holds the **"reference board"**, a binary tree acting as an index.
+- Each tree cell is one three-address word: address 1 points to the record,
+  addresses 2 and 3 to the left and right subordinate cells, and **0 means
+  "no child"**. The root ("head") address is kept in a fixed cell *l*.
+- The balance information is two extra binary digits per cell (see 1.3).
+
+The alternatives of the period each fail one requirement:
 
 | Representation | Search | Insert |
 |---|---|---|
 | Sorted array (binary search) | O(log N) | O(N) (shift elements) |
 | Unsorted list / array | O(N) | O(1) |
-| Plain binary search tree | O(log N) *on average*, O(N) worst | same |
-
-The paper's contribution is a tree whose *worst case* for both operations is
-O(log N), by keeping a small amount of balance information per node and
-repairing it locally after every insertion. Context: machines of the period
-(e.g. Soviet BESM-class computers) had tiny core memories, so the extra space
-had to be minimal — **two bits per node** suffice for the balance indicator.
-**⚠ verify any claim about the specific machine; the paper itself does not
-necessarily name one.**
+| Plain binary search tree (Windley 1960) | O(log N) average, O(N) worst | same |
 
 ### 1.3 Terminology and notation in the paper
 
-- The paper speaks of a **tree** whose vertices hold records, each record with
-  its key; left/right sub-trees hold smaller/larger keys.
-- Each vertex carries a **balance indicator** taking three values (the height
-  difference of its two sub-trees: −1, 0, +1). Our `Node::balance` reproduces
-  exactly this; we use the sign convention *height(right) − height(left)*.
-  **⚠ verify which sign convention the paper uses.**
-- The paper does **not** use the word "rotation"; the restructuring is
-  described as a re-arrangement of a few vertices. The name "AVL tree" and the
-  "single/double rotation" vocabulary were introduced later (popularized by
-  Knuth, TAOCP Vol. 3, §6.2.3). **⚠ verify.**
+| Paper (translation) | Modern term |
+|---|---|
+| reference board, dyadic tree | binary search tree (as an index) |
+| cell; head | node; root |
+| "directly subordinate on the left (right)" | left (right) child |
+| chain | downward path |
+| length of the left (right) branch | height of the left (right) subtree |
+| branch pivot | a longest path in a subtree |
+| **admissible tree** | **AVL tree**: branch lengths differ by ≤ 1 at every cell |
+| estimate | key |
+| recorded chain | search path, remembered during insertion |
+| separate orders "1 0" / "0 1" / "0 0" | balance −1 (left higher) / +1 (right higher) / 0 |
+| "the tree is reorganized" | single or double rotation |
+
+- The balance indicator is literally **two bits**: "If the left branch is
+  longer than the right, then 1 0 stands in these orders. If the right branch
+  is longer than the left, then 0 1 stands; and if they are equal, then 0 0."
+  There is no signed number, so no sign convention; our `balance =
+  h(right) − h(left)` maps 1 0 → −1, 0 1 → +1, 0 0 → 0.
+- The word **"rotation" does not appear**, nor does the name "AVL". The
+  restructuring is given only as pictures (Figures 3–4) of three arrangements.
+  The name was in use by 1965 (Foster's paper title, see 1.4).
 
 ### 1.4 Curiosities
 
+- **The height bound is stated loosely.** Lemma 1 proves, via
+  N_n = N_{n−1} + N_{n−2} + 1 and its closed-form (Fibonacci) solution, that
+  n < log_φ(N+1), and then rounds this up to **(3/2) log2(N+1)**. The
+  constant 1/log2 φ ≈ 1.4404 is today's textbook bound; the paper's 3/2 is
+  just a convenient upper estimate.
+- **Comparisons are three-way.** The paper notes that each comparison "gives
+  three answers" (<, =, >), which is how our `comparisons` counter is defined.
+- **Duplicates are ignored.** "If it turns out that the new element is
+  already contained in the former information, the tree does not change."
+- **Only insertion and search.** Deletion is not mentioned. The cost argument
+  is: search C log2(N+1), walking back up the recorded chain C₁ log2(N+1),
+  restructuring a constant — in all, C log2(N+1).
+- **No back pointers.** The upward walk uses the *recorded chain*: during the
+  search, "remembering the cell addresses of the chain along which we
+  proceed". Cells have no parent field.
 - It is generally regarded as the **first self-balancing binary search tree**,
-  predating B-trees (Bayer & McCreight, 1972) and red–black trees
-  (Bayer 1972; Guibas & Sedgewick 1978) by a decade.
-- **Deletion is not covered** by the paper. Deletion with O(log N) rotations
-  was worked out afterwards (C. C. Foster, "Information storage and retrieval
-  using AVL trees", *Proc. ACM National Conference*, 1965, is an early
-  Western treatment; Knuth 1973 discusses it). **⚠ verify.** Our `erase` is
-  therefore an extension, clearly separated from the paper's algorithm.
-- The worst-case trees are the **Fibonacci trees**: the minimum number of
-  nodes in an AVL tree of height *h* is N(h) = F(h+2) − 1.
+  a decade before B-trees (Bayer & McCreight, 1972) and symmetric binary
+  B-trees / red–black trees (Bayer 1972; Guibas & Sedgewick 1978).
+- **Early Western uptake:** C. C. Foster, "Information storage and retrieval
+  using AVL trees", *Proc. ACM 20th National Conference* (1965), 192–205 —
+  already using the name "AVL". A 1972 *CACM* note by K. C. Tan ("On Foster's
+  information storage and retrieval using AVL trees") showed that a
+  construction proposed by Foster does not work in general.
+- The worst-case trees (Figure 2 of the paper) are the **Fibonacci trees**:
+  N(h) = F(h+2) − 1.
 
 ---
 
@@ -134,6 +179,20 @@ Key property (in the paper): after an insertion **at most one** single or
 double rotation is needed, because the rotated subtree regains exactly its
 pre-insertion height, so no ancestor's balance changes.
 
+**Correspondence with the paper.** The paper phrases step 2 as: correct cell
+*u* (the new leaf's parent); if *u* was unbalanced it becomes 0 0 and
+recording is complete. Otherwise take the maximal run 𝔈 of the recorded chain,
+going up from *u*, whose cells had 0 0; set each to 1 0 or 0 1 (Lemma 2
+proves the new leaf lies on the longest path of each). Let *s₀* be the cell
+just above 𝔈. Three cases: (1) 𝔈 is the whole chain — done; (2) 𝔈 is on
+*s₀*'s short branch — set *s₀* to 0 0; (3) 𝔈 is on *s₀*'s long branch —
+reorganize per Figure 4. Figure 3's arrangement **a** is our single rotation,
+**b** our double rotation (with the middle cell's two possible balances, "1 0
+or 0 0" / "0 0 or 0 1" in Figure 4), and **c** the three-cell special case of
+the double rotation where all subtrees are empty. Our loop performs the same
+updates bottom-up, one cell per iteration; the run 𝔈 is exactly the cells
+the loop passes with |bal| becoming 1.
+
 ### 2.3 Deletion (extension, not in the paper)
 
 Standard approach: delete as in a BST (replacing a two-child node by its
@@ -146,16 +205,18 @@ preserves height and stops the retrace.
 
 | Issue | Paper | Our decision |
 |---|---|---|
-| Duplicate keys | **⚠ verify** (likely assumes distinct keys) | Overwrite value, no structural change |
-| Retrace mechanism | **⚠ verify** (stack of the search path vs. back pointers) | Parent pointers (required by the course `Node`) |
-| Balance-update formulas | Given as case tables for insertion | Generic formulas valid for any balances, so the same rotations serve deletion |
-| Sign of balance | **⚠ verify** | `h(right) − h(left)` |
+| Duplicate keys | "the tree does not change" (record not replaced) | Overwrite the stored value; shape unchanged (the course interface pairs a key with a value, so updating is the useful behaviour) — **deviation** |
+| Retrace mechanism | Remembered list of addresses of the search path ("recorded chain"); cells have no parent field | Parent pointers (required by the course `Node`) — **deviation** |
+| Balance updates | Given only as figures (new values in brackets in Figure 4) | Generic formulas valid for any balances, so the same rotations serve deletion |
+| Balance encoding | Two bits: 1 0 / 0 1 / 0 0 | `int8_t`, `h(right) − h(left)` ∈ {−1, 0, +1} |
+| Height bound | (3/2) log2(N+1), rounded from log_φ(N+1) | We check the tight form 1.4405 log2(n+2) − 0.3277 in tests |
+| Head (root) change | "necessary to change again the fixed cell in which the head … is indicated" | `replace_child` updates `root_` when the rotated node had no parent |
 | Deletion | Absent | Implemented as an extension and labelled as such |
 
 ### 2.5 Implementation decisions introduced by C++
 
 - `Node` is the course struct plus `std::int8_t balance` (the paper's
-  three-valued indicator; 1 byte, padding makes the node 32 bytes on x86-64
+  two-bit indicator; 1 byte, padding makes the node 32 bytes on x86-64
   either way).
 - Raw `new`/`delete` only; no `std::vector` / smart pointers in the structure.
   `clear()` and the destructor delete nodes **iteratively** in post-order via
@@ -243,7 +304,8 @@ About **47% of random insertions need a rebalancing**, split evenly between
 single and double rotations; retracing touches < 3 ancestors on average. So
 the extra work over a plain BST is O(1) per insertion — the paper's "at most
 one restructuring" is in practice "one restructuring about half the time".
-(Compare with Knuth's empirical figures in TAOCP Vol. 3 §6.2.3. **⚠ verify.**)
+(Knuth, TAOCP Vol. 3 §6.2.3, reports empirical statistics for random AVL
+insertions; we have not compared against his figures numerically.)
 
 **Time** (ns/op, median; `results/insert_time.png`, `results/find_time.png`)
 
@@ -306,16 +368,22 @@ one restructuring" is in practice "one restructuring about half the time".
 
 ## 4. Legacy (5%)
 
-- **Direct descendants in production code.**
-  - OpenZFS / illumos: generic AVL tree library (`avl.h`) used throughout ZFS.
-  - Windows NT kernel runtime: `RtlInsertElementGenericTableAvl` and related
-    AVL "generic table" routines.
-  - LLVM: `ImmutableSet`/`ImmutableMap` are built on a persistent AVL tree
-    (`ImutAVLTree`).
-  - OCaml standard library `Set`/`Map`: height-balanced trees in the AVL
-    family (imbalance tolerance of 2 instead of 1).
-  - GNU libavl (B. Pfaff): reference C implementations.
-  **⚠ verify each against current source trees.**
+- **Direct descendants in production code** (checked against current
+  source/documentation):
+  - **OpenZFS** (from Solaris/illumos, also in FreeBSD): generic intrusive AVL
+    library `include/sys/avl.h`, `module/avl/avl.c`, used throughout ZFS.
+  - **Windows kernel** (`ntddk.h`): `RTL_AVL_TABLE` and
+    `RtlInsertElementGenericTableAvl` & co. Microsoft's documentation notes
+    generic tables default to splay trees and describes the AVL variant as
+    more balanced and shallower; duplicates are rejected — as in the 1962
+    paper.
+  - **LLVM** `llvm/ADT/ImmutableSet.h`: `ImutAVLTree`, a persistent
+    (functional) AVL tree behind `ImmutableSet`/`ImmutableMap`, used e.g. by
+    the Clang static analyzer.
+  - **OCaml** standard library `Set`/`Map`: "balanced binary trees (the
+    heights of the children differ by at most 2)" — a relaxed AVL invariant
+    trading a little height for fewer rotations.
+  - GNU libavl (B. Pfaff): reference C implementations of AVL and related trees.
 - **Variants that changed the trade-off.**
   - Red–black trees (1972/1978): weaker balance (height ≤ 2 log2(n+1)) but
     O(1) amortized rotations on deletion; became the default in `std::map`
@@ -334,17 +402,28 @@ one restructuring" is in practice "one restructuring about half the time".
 ## References
 
 1. Adel'son-Vel'skii, G. M., Landis, E. M. (1962). An algorithm for the
-   organization of information. *Soviet Math. Doklady* 3, 1259–1263.
+   organization of information. *Soviet Math. Doklady* 3, 1259–1263,
+   transl. M. J. Ricci.
    (Original: *Doklady AN SSSR* 146(2), 263–266.)
 2. Knuth, D. E. (1998). *The Art of Computer Programming, Vol. 3: Sorting and
    Searching*, 2nd ed., §6.2.3 "Balanced Trees". Addison-Wesley.
 3. Cormen, T. H. et al. (2022). *Introduction to Algorithms*, 4th ed. MIT Press
    (Problem 13-3, AVL trees).
 4. Foster, C. C. (1965). Information storage and retrieval using AVL trees.
-   *Proc. 20th ACM National Conference*, 192–205. **⚠ verify.**
+   *Proc. ACM 20th National Conference*, 192–205.
+4b. Tan, K. C. (1972). On Foster's information storage and retrieval using
+   AVL trees. *Communications of the ACM* 15(9), 843.
+4c. Windley, P. F. (1960). Trees, forests and rearranging. *The Computer
+   Journal* 3(2), 84–88. (The paper's only cited reference.)
 5. Guibas, L. J., Sedgewick, R. (1978). A dichromatic framework for balanced
    trees. *FOCS 1978*, 8–21.
 6. Bayer, R. (1972). Symmetric binary B-trees: data structure and maintenance
    algorithms. *Acta Informatica* 1, 290–306.
 7. Haeupler, B., Sen, S., Tarjan, R. E. (2015). Rank-balanced trees.
    *ACM Transactions on Algorithms* 11(4), 30.
+8. Biographical sources: Wikipedia articles "Georgy Adelson-Velsky" and
+   "Evgenii Landis"; Chess Programming Wiki, "Georgy Adelson-Velsky", "ITEP
+   Chess Program", "Kaissa".
+9. Implementation sources: OpenZFS `include/sys/avl.h`; Microsoft Learn,
+   `RtlInsertElementGenericTableAvl` / `RTL_AVL_TABLE`; LLVM
+   `llvm/ADT/ImmutableSet.h`; OCaml `stdlib/set.ml`.
