@@ -1,0 +1,22 @@
+# AVL tree — Algorithmic Heritage Initiative (ADS 2026–27, Trees line)
+
+AVL tree (Adelson-Velsky & Landis, 1962) in C++20, behind the course's
+`SearchTree` / `Node` interface, with raw pointers only.
+
+## Layout
+| Path | What |
+|---|---|
+| `include/avl_tree.hpp`, `src/avl_tree.cpp` | `Node`, `SearchTree` (insert / find / inorder / clear, plus erase, size, height) |
+| `include/metrics.hpp` | **Stand-in** for the Moodle `metrics.hpp` (replace with the official one) |
+| `include/naive_bst.hpp` | Unbalanced BST baseline (benchmark only) |
+| `tests/test_avl.cpp` | Invariant, oracle (`std::map`), edge-case and rotation tests |
+| `bench/bench_avl.cpp`, `scripts/run_bench.sh`, `scripts/plot.py` | Benchmark + optional plots |
+
+## Build & run
+Requires g++ ≥ 12.
+```sh
+make test     # -std=c++20 -O2 -Wall -Wextra -Werror
+make asan     # same tests under AddressSanitizer + UBSan (leak check)
+make bench    # writes results/bench.csv, results/env.txt (+ PNGs if matplotlib is installed)
+scripts/run_bench.sh 16 3   # smaller/faster run: max n = 2^16, 3 reps
+```
