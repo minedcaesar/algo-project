@@ -173,7 +173,134 @@ preserves height and stops the retrace.
 
 ## 3. Evaluation (10%)
 
-_Filled in from `results/bench.csv`; see §3.3._
+### 3.1 Theoretical costs
+
+| Operation | Worst case | Notes |
+|---|---|---|
+| `find` | Θ(log n), ≤ 1.4405 log2(n+2) comparisons | height bound §2.1 |
+| `insert` | Θ(log n) | ≤ 1 rebalancing (single or double rotation) |
+| `erase` (ext.) | Θ(log n) | up to O(log n) rotations |
+| `inorder` | Θ(n) time, O(1) extra space | parent-pointer walk |
+| `clear` / destructor | Θ(n) time, O(1) extra space | |
+| Space | n nodes × 32 bytes | 4 pointers/ints + 1-byte balance + padding |
+
+Baselines: an unbalanced BST costs Θ(n) per operation on sorted input
+(Θ(n²) to build), and ≈ 2 ln n ≈ 1.386 log2 n comparisons per successful search
+on random input. `std::map` (libstdc++) is a red–black tree: height
+≤ 2 log2(n+1).
+
+### 3.2 Methodology
+
+- `bench/bench_avl.cpp`, run by `scripts/run_bench.sh 20 5 12345`.
+- n = 2^10 … 2^20; distinct even keys inserted in **random**, **ascending** or
+  **descending** order; then n successful lookups (all keys, shuffled) and n
+  unsuccessful lookups (odd keys). Fixed seeds: identical inputs per run.
+- Times are the **median of 5 repetitions**, in ns per operation; the counters
+  (comparisons, rotations, …) are deterministic per input.
+- The unbalanced BST on sorted input is capped at n = 2^15 (quadratic).
+- Environment (`results/env.txt`): Intel Xeon @ 2.10 GHz, 4 vCPUs, Linux 6.18,
+  g++ 13.3, `-O2`. Cloud VM: absolute times are noisy (±10–20%); trends and
+  counters are what matter.
+
+### 3.3 Results
+
+**Height** (`results/height.png`)
+
+| n | AVL random | AVL sorted | bound 1.4405 log2(n+2)−0.33 | ⌈log2(n+1)⌉ | naive BST random |
+|---|---|---|---|---|---|
+| 2^10 | 12 | 11 | 14.1 | 11 | 22 |
+| 2^15 | 18 | 16 | 21.3 | 16 | 37 |
+| 2^20 | 24 | 21 | 28.5 | 21 | 50 |
+
+Random AVL trees sit about 1.2·log2 n — well below the worst-case Fibonacci
+bound, which is only reached by adversarially constructed trees. Sorted input,
+the plain BST's worst case, yields *nearly perfect* AVL trees: every insert
+into the rightmost path triggers exactly one single rotation that keeps the
+tree complete.
+
+**Comparisons per operation** (`results/comparisons.png`), n = 2^20:
+
+| | successful find | unsuccessful find | theory |
+|---|---|---|---|
+| AVL, random | 19.42 | 20.42 | ≈ log2 n = 20 |
+| AVL, sorted | 19.00 | 20.00 | complete tree: log2 n − 1 + ε |
+| Naive BST, random | 25.89 | 26.89 | 2(1+1/n)H_n − 3 = **25.88** |
+| Naive BST, sorted (n=2^15) | 16384.5 | 16385.5 | (n+1)/2 |
+
+The naive-BST random case matches the classical average-case formula to two
+decimals, which is a good check that the counter is correct. AVL search is
+~25% cheaper in comparisons than a random BST, and exponentially cheaper than
+a degenerate one.
+
+**Rebalancing work per insertion** (constant in n, measured n = 2^10 … 2^20):
+
+| Input | rebalancings / insert | single | double | elementary rotations | balance updates |
+|---|---|---|---|---|---|
+| random | 0.466 | 0.233 | 0.233 | 0.698 | 2.79 |
+| sorted | 1.000 | 1.000 | 0 | 1.000 | 3.00 |
+
+About **47% of random insertions need a rebalancing**, split evenly between
+single and double rotations; retracing touches < 3 ancestors on average. So
+the extra work over a plain BST is O(1) per insertion — the paper's "at most
+one restructuring" is in practice "one restructuring about half the time".
+(Compare with Knuth's empirical figures in TAOCP Vol. 3 §6.2.3. **⚠ verify.**)
+
+**Time** (ns/op, median; `results/insert_time.png`, `results/find_time.png`)
+
+| n | AVL insert rnd | std::map insert rnd | naive insert rnd | AVL insert sorted | naive insert sorted |
+|---|---|---|---|---|---|
+| 2^10 | 86 | 88 | 70 | 22 | 881 |
+| 2^15 | 175 | 177 | 172 | 36 | 200 803 |
+| 2^20 | 1174 | 1114 | 1234 | 191 | — (quadratic) |
+
+| n | AVL find-hit rnd | std::map find-hit rnd | naive find-hit rnd |
+|---|---|---|---|
+| 2^10 | 52 | 55 | 56 |
+| 2^15 | 143 | 151 | 166 |
+| 2^20 | 1097 | 1236 | 1425 |
+
+### 3.4 Do measurements agree with theory?
+
+- **Counters: yes, closely.** Comparisons grow as log2 n with slope 1 for AVL
+  and ≈1.39 for the random BST; height stays inside the proven bound;
+  rotations per insert are constant.
+- **Wall-clock: only in shape for small n.** From 2^15 to 2^20, log2 n grows
+  by 33% but time per random insert grows ~6.7×. The cause is the **memory
+  hierarchy**, not the algorithm: at 2^20 nodes the tree occupies ~32 MB and
+  each of the ~20 levels of a search is a likely cache miss (pointer chasing
+  through nodes allocated in random order). The comparison count is the same
+  log n, but each step costs a DRAM access instead of an L1 hit.
+- **Sorted input is 5–6× faster than random** for the same number of
+  comparisons because every insertion walks the same, cache-hot right spine.
+  Lookups were shuffled, so find times do not show this effect.
+- **AVL vs. red–black (`std::map`)**: within noise for insertion; AVL lookups
+  are ~10% faster at 2^20, consistent with AVL's tighter height bound
+  (1.44 log2 n vs. 2 log2 n; `std::map`'s actual height is not observable, so
+  this explanation is plausible but not proven here) — the classic "AVL for
+  read-heavy workloads" trade-off. `std::map` also pays for its generic
+  allocator and node layout, so this is not a pure algorithm comparison.
+- **Unbalanced BST on random input** is competitive in time at small n (no
+  balancing overhead) but loses ~30% on lookups at 2^20 — and on sorted input
+  it is ~5 500× slower at only 2^15 keys, the exact failure the 1962 paper set
+  out to fix.
+
+### 3.5 Constant factors that matter
+
+1. Cache misses per level dominate everything above ~10^5 nodes.
+2. Node size (32 bytes): the 1-byte balance indicator costs nothing extra due
+   to alignment; storing heights instead would also fit.
+3. Parent pointers add 8 bytes/node and a few writes per rotation, in exchange
+   for a stack-free retrace, O(1)-space traversal and iterative `clear()`.
+4. Rebalancing (≈0.7 rotations, ≈2.8 indicator updates per insert) is cheap
+   relative to the descent.
+
+### 3.6 Limitations
+
+- Single machine, cloud VM, no CPU pinning; no hardware counters (perf) for
+  cache misses — the cache explanation is inferred from the scaling, not
+  measured directly.
+- `erase` is tested but not benchmarked.
+- Height of `std::map` is not observable through its interface.
 
 ---
 
