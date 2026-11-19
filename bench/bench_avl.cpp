@@ -2,11 +2,10 @@
 //
 // Output: CSV on stdout, one row per (structure, pattern, n), with the median
 // over REPS repetitions of wall-clock time and the (deterministic) operation
-// counters from TreeMetrics.
+// counters from heritage::TreeMetrics (timing via heritage::ScopedTimer).
 //
 // Usage: bench_avl [max_log2_n=20] [reps=5] [seed=12345]
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -17,7 +16,8 @@
 
 namespace {
 
-using Clock = std::chrono::steady_clock;
+using heritage::ScopedTimer;
+using heritage::TreeMetrics;
 
 enum class Pattern { Random, Ascending, Descending };
 const char* name(Pattern p) {
@@ -39,8 +39,8 @@ void make_keys(Pattern p, int n, std::mt19937& rng, int* ins, int* look) {
 }
 
 struct Sample {
-    double insert_ns = 0, find_hit_ns = 0, find_miss_ns = 0;
-    TreeMetrics ins, hit, miss;
+    TreeMetrics ins, hit, miss;  // elapsed_us filled by ScopedTimer
+    AvlStats avl;                // only meaningful for SearchTree
     int height = 0;
 };
 
@@ -50,40 +50,43 @@ template <class Tree>
 Sample run_tree(const int* ins, const int* look, int n) {
     Sample s;
     Tree t;
-    auto t0 = Clock::now();
-    for (int i = 0; i < n; ++i) t.insert(ins[i], i, s.ins);
-    auto t1 = Clock::now();
     long long acc = 0;
     int out = 0;
-    for (int i = 0; i < n; ++i) acc += t.find(look[i], out, s.hit) ? out : 0;
-    auto t2 = Clock::now();
-    for (int i = 0; i < n; ++i) acc += t.find(look[i] + 1, out, s.miss) ? 1 : 0;
-    auto t3 = Clock::now();
+    {
+        ScopedTimer timer(s.ins.elapsed_us);
+        for (int i = 0; i < n; ++i) t.insert(ins[i], i, s.ins);
+    }
+    {
+        ScopedTimer timer(s.hit.elapsed_us);
+        for (int i = 0; i < n; ++i) acc += t.find(look[i], out, s.hit) ? out : 0;
+    }
+    {
+        ScopedTimer timer(s.miss.elapsed_us);
+        for (int i = 0; i < n; ++i) acc += t.find(look[i] + 1, out, s.miss) ? 1 : 0;
+    }
     g_sink = g_sink + acc;
     s.height = t.height();
-    auto ns = [](auto a, auto b) { return std::chrono::duration<double, std::nano>(b - a).count(); };
-    s.insert_ns = ns(t0, t1) / n;
-    s.find_hit_ns = ns(t1, t2) / n;
-    s.find_miss_ns = ns(t2, t3) / n;
-    return s;  // t destroyed here, outside the timed region
+    if constexpr (requires { t.stats(); }) s.avl = t.stats();
+    return s;  // t destroyed here, outside the timed regions
 }
 
 Sample run_map(const int* ins, const int* look, int n) {
     Sample s;
     std::map<int, int> t;
-    auto t0 = Clock::now();
-    for (int i = 0; i < n; ++i) t[ins[i]] = i;
-    auto t1 = Clock::now();
     long long acc = 0;
-    for (int i = 0; i < n; ++i) { auto it = t.find(look[i]); acc += it != t.end() ? it->second : 0; }
-    auto t2 = Clock::now();
-    for (int i = 0; i < n; ++i) acc += t.count(look[i] + 1);
-    auto t3 = Clock::now();
+    {
+        ScopedTimer timer(s.ins.elapsed_us);
+        for (int i = 0; i < n; ++i) t[ins[i]] = i;
+    }
+    {
+        ScopedTimer timer(s.hit.elapsed_us);
+        for (int i = 0; i < n; ++i) { auto it = t.find(look[i]); acc += it != t.end() ? it->second : 0; }
+    }
+    {
+        ScopedTimer timer(s.miss.elapsed_us);
+        for (int i = 0; i < n; ++i) acc += static_cast<long long>(t.count(look[i] + 1));
+    }
     g_sink = g_sink + acc;
-    auto ns = [](auto a, auto b) { return std::chrono::duration<double, std::nano>(b - a).count(); };
-    s.insert_ns = ns(t0, t1) / n;
-    s.find_hit_ns = ns(t1, t2) / n;
-    s.find_miss_ns = ns(t2, t3) / n;
     s.height = -1;  // not observable through the std::map interface
     return s;
 }
@@ -126,17 +129,17 @@ int main(int argc, char** argv) {
                     last = which == 0 ? run_tree<SearchTree>(ins, look, n)
                          : which == 1 ? run_tree<NaiveBST>(ins, look, n)
                                       : run_map(ins, look, n);
-                    ti[r] = last.insert_ns;
-                    th[r] = last.find_hit_ns;
-                    tm[r] = last.find_miss_ns;
+                    ti[r] = last.ins.elapsed_us * 1000.0 / n;  // ns per operation
+                    th[r] = last.hit.elapsed_us * 1000.0 / n;
+                    tm[r] = last.miss.elapsed_us * 1000.0 / n;
                 }
                 // Counters vary across reps only for random input; report the last rep's.
                 const double dn = n;
                 std::printf("%s,%s,%d,%.2f,%.2f,%.2f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", sname, name(p), n,
                             median(ti, reps), median(th, reps), median(tm, reps), last.height,
-                            last.ins.comparisons / dn, last.hit.comparisons / dn, last.miss.comparisons / dn,
-                            last.ins.rotations / dn, last.ins.single_rotations / dn,
-                            last.ins.double_rotations / dn, last.ins.balance_updates / dn);
+                            last.ins.key_compares / dn, last.hit.key_compares / dn, last.miss.key_compares / dn,
+                            last.ins.rotations / dn, last.avl.single_rotations / dn,
+                            last.avl.double_rotations / dn, last.avl.balance_updates / dn);
                 std::fflush(stdout);
             }
         }

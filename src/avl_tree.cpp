@@ -4,10 +4,26 @@
 //   balance(x) = height(x->right) - height(x->left)  ("+" = right-heavy).
 //   All operations are iterative except copy-construction (whose recursion
 //   depth is bounded by the AVL height, < 1.45 log2 n).
+//
+// heritage::TreeMetrics fields used:
+//   key_compares   one per node whose key is compared (three-way comparison)
+//   rotations      elementary rotations (a double rotation counts 2)
+//   max_depth      deepest node reached by any operation (root = depth 1)
+//   node_allocs    nodes created with new
+//   peak_aux_bytes stays 0: no operation allocates auxiliary memory
+//                  (no recursion stack or explicit stack is used)
+//   elapsed_us     not touched here; the benchmark fills it with ScopedTimer
 #include "avl_tree.hpp"
 
 #include <algorithm>
 #include <utility>
+
+namespace {
+// Records `depth` (root = 1) in m.max_depth if it is the deepest seen so far.
+inline void note_depth(heritage::TreeMetrics& m, std::size_t depth) noexcept {
+    if (depth > m.max_depth) m.max_depth = depth;
+}
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Lifetime
@@ -44,13 +60,16 @@ SearchTree& SearchTree::operator=(const SearchTree& other) {
 }
 
 SearchTree::SearchTree(SearchTree&& other) noexcept
-    : root_(std::exchange(other.root_, nullptr)), size_(std::exchange(other.size_, 0)) {}
+    : root_(std::exchange(other.root_, nullptr)),
+      size_(std::exchange(other.size_, 0)),
+      stats_(std::exchange(other.stats_, AvlStats{})) {}
 
 SearchTree& SearchTree::operator=(SearchTree&& other) noexcept {
     if (this != &other) {
         clear();
         root_ = std::exchange(other.root_, nullptr);
         size_ = std::exchange(other.size_, 0);
+        stats_ = std::exchange(other.stats_, AvlStats{});
     }
     return *this;
 }
@@ -97,7 +116,7 @@ void SearchTree::replace_child(Node* parent, Node* old_child, Node* new_child) n
 // Balance update for arbitrary (not only insertion-time) balances:
 //   x' = x - 1 - max(y, 0)
 //   y' = y - 1 + min(x', 0)
-Node* SearchTree::rotate_left(Node* x, TreeMetrics& m) noexcept {
+Node* SearchTree::rotate_left(Node* x, heritage::TreeMetrics& m) noexcept {
     Node* y = x->right;
     x->right = y->left;
     if (y->left != nullptr) y->left->parent = x;
@@ -116,7 +135,7 @@ Node* SearchTree::rotate_left(Node* x, TreeMetrics& m) noexcept {
 // Mirror image of rotate_left:
 //   x' = x + 1 - min(y, 0)
 //   y' = y + 1 + max(x', 0)
-Node* SearchTree::rotate_right(Node* x, TreeMetrics& m) noexcept {
+Node* SearchTree::rotate_right(Node* x, heritage::TreeMetrics& m) noexcept {
     Node* y = x->left;
     x->left = y->right;
     if (y->right != nullptr) y->right->parent = x;
@@ -135,21 +154,21 @@ Node* SearchTree::rotate_right(Node* x, TreeMetrics& m) noexcept {
 // x has balance +-2. Restores the AVL property at x with a single or double
 // rotation and returns the new root of the subtree. Child balance 0 can only
 // occur during deletion; a single rotation is correct in that case.
-Node* SearchTree::rebalance(Node* x, TreeMetrics& m) noexcept {
+Node* SearchTree::rebalance(Node* x, heritage::TreeMetrics& m) noexcept {
     if (x->balance < 0) {           // left-heavy
         if (x->left->balance > 0) { // left-right case
             rotate_left(x->left, m);
-            ++m.double_rotations;
+            ++stats_.double_rotations;
         } else {
-            ++m.single_rotations;   // left-left case
+            ++stats_.single_rotations;   // left-left case
         }
         return rotate_right(x, m);
     }
     if (x->right->balance < 0) {    // right-left case
         rotate_right(x->right, m);
-        ++m.double_rotations;
+        ++stats_.double_rotations;
     } else {
-        ++m.single_rotations;       // right-right case
+        ++stats_.single_rotations;       // right-right case
     }
     return rotate_left(x, m);
 }
@@ -157,17 +176,21 @@ Node* SearchTree::rebalance(Node* x, TreeMetrics& m) noexcept {
 // ---------------------------------------------------------------------------
 // Search
 // ---------------------------------------------------------------------------
-bool SearchTree::find(int key, int& out, TreeMetrics& m) const {
+bool SearchTree::find(int key, int& out, heritage::TreeMetrics& m) const {
     const Node* n = root_;
+    std::size_t depth = 0;
     while (n != nullptr) {
-        ++m.comparisons;
+        ++m.key_compares;
+        ++depth;
         if (key < n->key) n = n->left;
         else if (n->key < key) n = n->right;
         else {
             out = n->value;
+            note_depth(m, depth);
             return true;
         }
     }
+    note_depth(m, depth);
     return false;
 }
 
@@ -202,10 +225,11 @@ void SearchTree::inorder(int* out_buf, std::size_t cap) const {
 // ---------------------------------------------------------------------------
 // Insertion (the operation described in the 1962 paper)
 // ---------------------------------------------------------------------------
-void SearchTree::insert(int key, int val, TreeMetrics& m) {
+void SearchTree::insert(int key, int val, heritage::TreeMetrics& m) {
     if (root_ == nullptr) {
         root_ = new Node(key, val, nullptr);
-        ++m.allocations;
+        ++m.node_allocs;
+        note_depth(m, 1);
         size_ = 1;
         return;
     }
@@ -213,8 +237,10 @@ void SearchTree::insert(int key, int val, TreeMetrics& m) {
     // 1. Ordinary BST descent.
     Node* p = root_;
     Node* child = nullptr;
+    std::size_t depth = 0;
     for (;;) {
-        ++m.comparisons;
+        ++m.key_compares;
+        ++depth;
         if (key < p->key) {
             if (p->left == nullptr) {
                 child = p->left = new Node(key, val, p);
@@ -229,16 +255,18 @@ void SearchTree::insert(int key, int val, TreeMetrics& m) {
             p = p->right;
         } else {
             p->value = val;  // key already present: update in place
+            note_depth(m, depth);
             return;
         }
     }
-    ++m.allocations;
+    ++m.node_allocs;
+    note_depth(m, depth + 1);  // depth of the new leaf, before any rotation
     ++size_;
 
     // 2. Retrace towards the root. `child`'s subtree just grew by one level.
     while (p != nullptr) {
         p->balance = static_cast<std::int8_t>(p->balance + (child == p->left ? -1 : +1));
-        ++m.balance_updates;
+        ++stats_.balance_updates;
         if (p->balance == 0) return;  // p's height unchanged: done
         if (p->balance == 1 || p->balance == -1) {
             child = p;                // p grew: propagate upwards
@@ -255,14 +283,17 @@ void SearchTree::insert(int key, int val, TreeMetrics& m) {
 // ---------------------------------------------------------------------------
 // Deletion (extension; due to later authors, not the 1962 paper)
 // ---------------------------------------------------------------------------
-bool SearchTree::erase(int key, TreeMetrics& m) {
+bool SearchTree::erase(int key, heritage::TreeMetrics& m) {
     Node* z = root_;
+    std::size_t depth = 0;
     while (z != nullptr) {
-        ++m.comparisons;
+        ++m.key_compares;
+        ++depth;
         if (key < z->key) z = z->left;
         else if (z->key < key) z = z->right;
         else break;
     }
+    note_depth(m, depth);
     if (z == nullptr) return false;
 
     // Two children: move the in-order successor's payload into z and delete
@@ -281,13 +312,13 @@ bool SearchTree::erase(int key, TreeMetrics& m) {
     bool from_left = (p != nullptr && p->left == z);
     replace_child(p, z, child);
     delete z;
-    ++m.deallocations;
+    ++stats_.node_frees;
     --size_;
 
     // Retrace: the subtree on side `from_left` of p just shrank by one level.
     while (p != nullptr) {
         p->balance = static_cast<std::int8_t>(p->balance + (from_left ? +1 : -1));
-        ++m.balance_updates;
+        ++stats_.balance_updates;
         if (p->balance == 1 || p->balance == -1) break;  // height unchanged
 
         Node* top = p;
@@ -309,15 +340,18 @@ bool SearchTree::erase(int key, TreeMetrics& m) {
 // ---------------------------------------------------------------------------
 #include "naive_bst.hpp"
 
-void NaiveBST::insert(int key, int val, TreeMetrics& m) {
+void NaiveBST::insert(int key, int val, heritage::TreeMetrics& m) {
     if (root_ == nullptr) {
         root_ = new Node(key, val, nullptr);
-        ++m.allocations;
+        ++m.node_allocs;
+        note_depth(m, 1);
         return;
     }
     Node* p = root_;
+    std::size_t depth = 0;
     for (;;) {
-        ++m.comparisons;
+        ++m.key_compares;
+        ++depth;
         if (key < p->key) {
             if (p->left == nullptr) { p->left = new Node(key, val, p); break; }
             p = p->left;
@@ -326,19 +360,24 @@ void NaiveBST::insert(int key, int val, TreeMetrics& m) {
             p = p->right;
         } else {
             p->value = val;
+            note_depth(m, depth);
             return;
         }
     }
-    ++m.allocations;
+    ++m.node_allocs;
+    note_depth(m, depth + 1);
 }
 
-bool NaiveBST::find(int key, int& out, TreeMetrics& m) const {
+bool NaiveBST::find(int key, int& out, heritage::TreeMetrics& m) const {
+    std::size_t depth = 0;
     for (const Node* n = root_; n != nullptr;) {
-        ++m.comparisons;
+        ++m.key_compares;
+        ++depth;
         if (key < n->key) n = n->left;
         else if (n->key < key) n = n->right;
-        else { out = n->value; return true; }
+        else { out = n->value; note_depth(m, depth); return true; }
     }
+    note_depth(m, depth);
     return false;
 }
 

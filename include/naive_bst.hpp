@@ -13,8 +13,8 @@ public:
     NaiveBST(const NaiveBST&) = delete;
     NaiveBST& operator=(const NaiveBST&) = delete;
 
-    void insert(int key, int val, TreeMetrics& m);
-    bool find(int key, int& out, TreeMetrics& m) const;
+    void insert(int key, int val, heritage::TreeMetrics& m);
+    bool find(int key, int& out, heritage::TreeMetrics& m) const;
     void clear() noexcept;
     int height() const;
 

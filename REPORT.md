@@ -227,8 +227,17 @@ preserves height and stops the retrace.
   pointer-stealing move.
 - Everything except the deep copy is iterative; copy recursion depth is
   bounded by the AVL height.
-- `metrics.hpp` is a **stand-in** for the Moodle header (comparisons,
-  rotations, single/double rebalancings, balance updates, allocations).
+- Metrics use the official, unmodified `metrics.hpp` (`heritage::TreeMetrics`):
+  `key_compares` (one per three-way comparison, as in the paper), `rotations`
+  (a double rotation counts 2), `max_depth` (deepest node reached, root = 1,
+  measured before rebalancing), `node_allocs`. `peak_aux_bytes` stays 0
+  because no operation uses a recursion stack or auxiliary buffer.
+  `elapsed_us` is filled in the benchmark with `heritage::ScopedTimer` around
+  whole loops (timing each operation would cost more than the operation).
+- Counters the official struct has no field for (single vs. double
+  rebalancings, balance-indicator updates, nodes freed by `erase`) live in a
+  per-tree `AvlStats` struct, read via `SearchTree::stats()`, so the required
+  `TreeMetrics&` signatures are unchanged.
 
 ---
 

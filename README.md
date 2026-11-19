@@ -7,7 +7,7 @@ AVL tree (Adelson-Velsky & Landis, 1962) in C++20, behind the course's
 | Path | What |
 |---|---|
 | `include/avl_tree.hpp`, `src/avl_tree.cpp` | `Node`, `SearchTree` (insert / find / inorder / clear, plus erase, size, height) |
-| `include/metrics.hpp` | **Stand-in** for the Moodle `metrics.hpp` (replace with the official one) |
+| `include/metrics.hpp` | Official course header (`heritage::TreeMetrics`, `heritage::ScopedTimer`), unmodified |
 | `include/naive_bst.hpp` | Unbalanced BST baseline (benchmark only) |
 | `tests/test_avl.cpp` | Invariant, oracle (`std::map`), edge-case and rotation tests |
 | `bench/bench_avl.cpp`, `scripts/run_bench.sh`, `scripts/plot.py` | Benchmark + optional plots |

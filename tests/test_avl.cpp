@@ -18,6 +18,8 @@
 
 #include "avl_tree.hpp"
 
+using heritage::TreeMetrics;
+
 static int g_failures = 0;
 static int g_checks = 0;
 
@@ -90,7 +92,7 @@ static void test_empty() {
     CHECK(t.height() == 0);
     CHECK(!t.find(0, out, m));
     CHECK(out == 12345);  // out untouched on miss
-    CHECK(m.comparisons == 0);
+    CHECK(m.key_compares == 0);
     int buf[1] = {777};
     t.inorder(buf, 1);
     CHECK(buf[0] == 777);
@@ -106,7 +108,7 @@ static void test_single_and_duplicates() {
     CHECK(t.size() == 1 && t.height() == 1);
     t.insert(7, 71, m);  // duplicate key: value overwritten, no new node
     CHECK(t.size() == 1);
-    CHECK(m.allocations == 1);
+    CHECK(m.node_allocs == 1);
     int out = 0;
     CHECK(t.find(7, out, m) && out == 71);
     CHECK(valid_avl(t));
@@ -127,8 +129,8 @@ static void rotation_case(int a, int b, int c, std::uint64_t expect_rot, bool ex
     CHECK(r->right != nullptr && r->right->key == 3);
     CHECK(r->balance == 0 && r->left->balance == 0 && r->right->balance == 0);
     CHECK(m.rotations == expect_rot);
-    CHECK(m.double_rotations == (expect_double ? 1u : 0u));
-    CHECK(m.single_rotations == (expect_double ? 0u : 1u));
+    CHECK(t.stats().double_rotations == (expect_double ? 1u : 0u));
+    CHECK(t.stats().single_rotations == (expect_double ? 0u : 1u));
     CHECK(valid_avl(t));
 }
 
@@ -288,7 +290,7 @@ static void test_erase_all_orders() {
     delete[] keys;
     CHECK(ok);
     CHECK(t.empty() && t.root() == nullptr);
-    CHECK(m.deallocations == 5000);
+    CHECK(t.stats().node_frees == 5000);
 }
 
 static void test_copy_move_clear() {
@@ -332,17 +334,34 @@ static void test_metrics_counting() {
     SearchTree t;
     TreeMetrics m;
     for (int i = 0; i < 7; ++i) t.insert(i, i, m);  // perfect tree of height 3
-    CHECK(m.allocations == 7);
+    CHECK(m.node_allocs == 7);
+    // Inserting 4 into 1(0, 2(-, 3)) places it at depth 4 before the rotation.
+    CHECK(m.max_depth == 4);
+    CHECK(m.peak_aux_bytes == 0);  // no auxiliary memory is ever used
     m.reset();
     int out = 0;
     CHECK(t.find(3, out, m));  // root
-    CHECK(m.comparisons == 1);
+    CHECK(m.key_compares == 1);
+    CHECK(m.max_depth == 1);
     m.reset();
     CHECK(t.find(0, out, m));  // leaf at depth 3
-    CHECK(m.comparisons == 3);
+    CHECK(m.key_compares == 3);
+    CHECK(m.max_depth == 3);
     m.reset();
     CHECK(!t.find(100, out, m));  // miss: walks one full path
-    CHECK(m.comparisons == 3);
+    CHECK(m.key_compares == 3);
+    CHECK(m.max_depth == 3);
+    CHECK(m.rotations == 0);  // lookups never restructure
+
+    // Stats: ascending insertion of 7 keys = 4 single rotations, and the
+    // copy starts with fresh stats while a move carries them over.
+    CHECK(t.stats().single_rotations == 4 && t.stats().double_rotations == 0);
+    SearchTree c(t);
+    CHECK(c.stats().single_rotations == 0);
+    SearchTree mv(std::move(t));
+    CHECK(mv.stats().single_rotations == 4 && t.stats().single_rotations == 0);
+    mv.reset_stats();
+    CHECK(mv.stats().balance_updates == 0);
 }
 
 int main() {
